@@ -1,30 +1,35 @@
+var format = require('util').format;
 var sqlite3 = require('sqlite3');
+
+var INSERT = 'INSERT INTO %s (%s) VALUES (%s)';
+var UPDATE = 'UPDATE %s SET %s WHERE %s';
 
 module.exports = function (database_name, done) {
     var _self = this;
 
     var db = new sqlite3.Database(database_name);
 
-    var buildPromise = function () {
-        var promises = columns.map(function (data, column) {
+    var buildPromise = function (columns, table_name, queryId) {
 
-            return new Promise (function (done) {
-                if (typeof columns[columName] == 'object') {
-                    insert(column, data, done, table_name, queryResult.lastID);
-                }
-            });
+        var promises = Object.keys(columns).map(function (column) {
+            if (!Array.isArray(columns[column]) && typeof columns[column] == 'object') {
+                return new Promise (function (done, reject) {
+                    insert(column, columns[column], done, reject, table_name, queryId);
+                });
+            }
 
+            return {};
         });
 
-        columns.forEach(function (data, column) {
-            if (Array.isArray(columns[columName])) {
+        Object.keys(columns).forEach(function (column) {
+            if (Array.isArray(columns[column])) {
 
                 Array.prototype.push.apply(
                     promises,
-                    columns[columName].map(function (aData) {
-                        return function (done) {
-                            insert(column, aData, done, table_name, queryResult.lastID);
-                        }
+                    columns[column].map(function (aData) {
+                        return new Promise(function (done, reject) {
+                            insert(column, aData, done, reject, table_name, queryId);
+                        });
                     })
                 );
 
@@ -34,88 +39,55 @@ module.exports = function (database_name, done) {
         return promises;
     }
 
-    var insert = function (table_name, columns, done, parentTable, parentId) {
+    var insert = function (table_name, columns, done, reject, parentTable, parentId) {
         if (parentTable && parentId) {
-            columns.parentTable = parentId;
+            columns[parentTable + '_id'] = parentId;
         }
 
-        var columNames = Object.key(columns);
+        var columNames = Object.keys(columns);
 
         //Adding Main Object
         var mainObjectColumns = columNames.filter(function (columName) {
             return typeof columns[columName] != 'object' && !Array.isArray(columns[columName]);
         });
 
-        var stm = db.prepare('INSERT INTO ? (?) VALUES (?)');
-
-        db.run (
+        var stmt = db.prepare(format(
+            INSERT,
             table_name,
-            mainObject.join(','),
-            mainObjectColumns.map(function (columnName) {
-                return columns[columnName];
-            }), function () {
-                Promise.all(promises).then(done);
-            }
-        );
-    }
+            mainObjectColumns.join(','),
+            (mainObjectColumns.map(function (columnName) {
+                return "?";
+            }).join(','))
+        ));
 
-    var update = function (table_name, columns, done, parentTable, parentId) {
-        if (parentTable && parentId) {
-            columns.parentTable = parentId;
-        }
-
-        var columNames = Object.key(columns);
-
-        //Adding Main Object
-        var mainObjectColumns = columNames.filter(function (columName) {
-            return typeof columns[columName] != 'object' && !Array.isArray(columns[columName]);
+        var arguments = mainObjectColumns.map(function (columnName) {
+            return columns[columnName];
         });
 
-        var stm = db.prepare('INSERT INTO ? (?) VALUES (?)');
-
-        db.run (
-            table_name,
-            mainObject.join(','),
-            mainObjectColumns.map(function (columnName) {
-                return columns[columnName];
-            }), function () {
-                var queryResult = this;
-
-                var promises = columns.map(function (data, column) {
-
-                    return new Promise (function (done) {
-                        if (typeof columns[columName] == 'object') {
-                            insert(column, data, done, table_name, queryResult.lastID);
-                        }
-                    });
-
-                });
-
-                columns.forEach(function (data, column) {
-                    if (Array.isArray(columns[columName])) {
-
-                        Array.prototype.push.apply(
-                            promises,
-                            columns[columName].map(function (aData) {
-                                return function (done) {
-                                    insert(column, aData, done, table_name, queryResult.lastID);
-                                }
-                            })
-                        );
-
-                    }
-                });
-
-                Promise.all(promises).then(done);
+        stmt.run( ...arguments, function (err, result) {
+            if (err) {
+                reject(err);
             }
-        );
+
+            Promise
+                .all(buildPromise(columns, table_name, this.lastID))
+                .then(done)
+                .catch(reject);
+        });
     }
 
     var facade = function (tablename, data, done, execute) {
+
         if (typeof data == 'object') {
+            db.run ('BEGIN TRANSACTION;');
 
-            execute(tablename, data, done);
-
+            execute(tablename, data, function () {
+                db.run('END TRANSACTION;');
+                done ();
+            }, function (err) {
+                db.run('ROLLBACK;');
+                done (err);
+            });
         } else if (Array.isArray(data)) {
 
             Promise.all(data.map(function (sData) {
@@ -125,6 +97,7 @@ module.exports = function (database_name, done) {
             })).then(done);
 
         }
+
     }
 
     _self.insert = function (tablename, data, done) {

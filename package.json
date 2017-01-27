@@ -1,0 +1,16 @@
+{
+  "name": "jSqlite",
+  "version": "0.1.0",
+  "description": "SQLite to JSON",
+  "author": "Santiago Roca <snroca@hotmail.com>",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YouBIM/sqlite-to-json"
+  },
+  "dependencies": {
+    "sqlite3": "^3.1.8"
+  },
+  "preferGlobal": true,
+  "private": true
+}
